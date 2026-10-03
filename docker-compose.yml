@@ -1,0 +1,16 @@
+services:
+  smartdoc-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smartdoc_rag_app
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./chroma_db:/app/chroma_db
+    restart: unless-stopped
