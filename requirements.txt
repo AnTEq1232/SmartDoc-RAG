@@ -1,21 +1,10 @@
-# Interfejs i serwer
 streamlit>=1.30.0
-
-# Framework RAG / LangChain
-langchain>=0.1.0
-langchain-community>=0.0.20
-langchain-core>=0.1.20
-langchain-openai>=0.0.5
-
-# Baza wektorowa i Embeddings
-chromadb>=0.4.22
+langchain>=0.2.0
+langchain-classic>=1.0.0
+langchain-community>=0.2.0
+langchain-core>=0.2.0
+langchain-google-genai>=1.0.0
 sentence-transformers>=2.3.1
-
-# Ładowanie i przetwarzanie dokumentów (PDF, DOCX, TXT)
+chromadb>=0.4.22
 pypdf>=4.0.0
-python-docx>=1.1.0
-unstructured>=0.12.0
-
-# Narzędzia pomocnicze
 python-dotenv>=1.0.0
-pydantic>=2.0.0

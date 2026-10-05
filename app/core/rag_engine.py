@@ -1,7 +1,7 @@
 import os
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
@@ -25,13 +25,17 @@ def process_document(file_path: str):
     return add_documents_to_store(splits)
 
 def get_rag_chain():
-    """Tworzy i zwraca łańcuch RAG."""
     if not os.path.exists(CHROMA_PATH):
         return None
 
     vectorstore = get_vector_store()
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    # Inicjalizacja darmowego modelu Google Gemini 1.5 Flash
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.6-flash",
+        temperature=0
+    )
 
     system_prompt = (
         "Jesteś pomocnym asystentem do analizy dokumentów.\n"
