@@ -12,6 +12,10 @@ from app.core.rag_engine import (
     get_llm,
 )
 
+
+def _has_text(value: str) -> bool:
+    return bool(value and value.strip())
+
 # Konfiguracja strony
 st.set_page_config(page_title="SmartDoc-RAG", page_icon="📄", layout="wide")
 st.title("📄 SmartDoc-RAG — Czat z Twoim Dokumentem")
@@ -40,11 +44,25 @@ with st.sidebar:
                 loader = PyPDFLoader(tmp_file_path)
                 docs = loader.load()
 
+                # Odfiltruj puste strony, aby uniknąć pustych embeddingów w Chroma.
+                docs = [doc for doc in docs if _has_text(doc.page_content)]
+                if not docs:
+                    os.remove(tmp_file_path)
+                    st.error("Nie udało się odczytać tekstu z PDF (puste strony lub skan bez OCR).")
+                    st.stop()
+
                 text_splitter = RecursiveCharacterTextSplitter(
                     chunk_size=1000,
                     chunk_overlap=200
                 )
                 splits = text_splitter.split_documents(docs)
+
+                # Odfiltruj puste fragmenty po podziale.
+                splits = [chunk for chunk in splits if _has_text(chunk.page_content)]
+                if not splits:
+                    os.remove(tmp_file_path)
+                    st.error("Po podziale dokumentu nie znaleziono fragmentów z tekstem do indeksowania.")
+                    st.stop()
 
                 # Tworzenie bazy wektorowej w pamięci sesji
                 embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview")

@@ -52,9 +52,10 @@ def get_llm():
     """Inicjalizuje lekki i stabilny model Gemini wraz z obsługą błędów i ponowień."""
     try:
         return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+            model="gemini-3.5-flash-lite",
             temperature=0,
-            max_retries=6,  # Automatyczne ponawianie zapytań przy chwilowym błędzie 503
+            max_retries=2,  # Automatyczne ponawianie zapytań przy chwilowym błędzie 503
+            timeout=30,  # Limit czasu na odpowiedź modelu
         )
     except Exception as e:
         raise RuntimeError(f"Błąd podczas inicjalizacji modelu Gemini LLM: {str(e)}") from e
