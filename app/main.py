@@ -1,60 +1,135 @@
-import streamlit as st
 import os
-from core.rag_engine import process_document, get_rag_chain
-from config import DATA_DIR
+import tempfile
+import streamlit as st
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_core.messages import HumanMessage, AIMessage
 
-st.set_page_config(page_title="SmartDoc RAG", page_icon="📄", layout="wide")
+from app.core.rag_engine import (
+    get_conversational_rag_chain,
+    get_llm,
+)
 
-st.title("📄 SmartDoc RAG")
 
-with st.sidebar:
-    st.header("1. Wgraj dokument")
-    uploaded_file = st.file_uploader("Wybierz plik PDF lub TXT", type=["pdf", "txt"])
+def _has_text(value: str) -> bool:
+    return bool(value and value.strip())
 
-    if uploaded_file is not None:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        temp_path = os.path.join(DATA_DIR, uploaded_file.name)
-        
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+# Konfiguracja strony
+st.set_page_config(page_title="SmartDoc-RAG", page_icon="📄", layout="wide")
+st.title("📄 SmartDoc-RAG — Czat z Twoim Dokumentem")
 
-        if st.button("Przetwórz dokument"):
-            with st.spinner("Przetwarzanie dokumentu..."):
-                try:
-                    process_document(temp_path)
-                    st.success("Dokument został pomyślnie przetworzony!")
-                except Exception as e:
-                    st.error(f"Błąd: {e}")
-
+# --- 1. Inicjalizacja stanu sesji Streamlit ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
+
+# --- 2. Sidebar: Wgrywanie dokumentu PDF ---
+with st.sidebar:
+    st.header("⚙️ Zarządzanie dokumentem")
+    uploaded_file = st.file_uploader("Prześlij plik PDF", type=["pdf"])
+
+    if uploaded_file is not None:
+        if st.button("Przetwórz i załaduj PDF"):
+            with st.spinner("Przetwarzanie pliku PDF i tworzenie bazy wektorowej..."):
+                # Zapis pliku tymczasowo na dysku
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    tmp_file.write(uploaded_file.read())
+                    tmp_file_path = tmp_file.name
+
+                # Ładowanie i podział dokumentu na fragmenty
+                loader = PyPDFLoader(tmp_file_path)
+                docs = loader.load()
+
+                # Odfiltruj puste strony, aby uniknąć pustych embeddingów w Chroma.
+                docs = [doc for doc in docs if _has_text(doc.page_content)]
+                if not docs:
+                    os.remove(tmp_file_path)
+                    st.error("Nie udało się odczytać tekstu z PDF (puste strony lub skan bez OCR).")
+                    st.stop()
+
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                splits = text_splitter.split_documents(docs)
+
+                # Odfiltruj puste fragmenty po podziale.
+                splits = [chunk for chunk in splits if _has_text(chunk.page_content)]
+                if not splits:
+                    os.remove(tmp_file_path)
+                    st.error("Po podziale dokumentu nie znaleziono fragmentów z tekstem do indeksowania.")
+                    st.stop()
+
+                # Tworzenie bazy wektorowej w pamięci sesji
+                embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview")
+                vectorstore = Chroma.from_documents(
+                    documents=splits,
+                    embedding=embeddings
+                )
+
+                st.session_state.vectorstore = vectorstore
+                # Czyszczenie starej historii przy wgraniu nowego pliku
+                st.session_state.messages = []
+                os.remove(tmp_file_path)
+
+                st.success("Plik przetworzony pomyślnie! Możesz zadać pytanie.")
+
+    if st.session_state.vectorstore is not None:
+        if st.button("🗑️ Wyczyść historię i plik"):
+            st.session_state.vectorstore = None
+            st.session_state.messages = []
+            st.rerun()
+
+# --- 3. Wyświetlanie historii czatu ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if user_input := st.chat_input("Zadaj pytanie dotyczące wgranego dokumentu..."):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+# Pomocnicza konwersja historii wiadomości dla LangChain
+def get_langchain_chat_history():
+    chat_history = []
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            chat_history.append(HumanMessage(content=msg["content"]))
+        elif msg["role"] == "assistant":
+            chat_history.append(AIMessage(content=msg["content"]))
+    return chat_history
 
-    rag_chain = get_rag_chain()
-    
-    if rag_chain is None:
+# --- 4. Obsługa czatu ---
+if st.session_state.vectorstore is None:
+    st.info("👈 Prześlij plik PDF w panelu bocznym po lewej stronie, aby rozpocząć rozmowę.")
+else:
+    user_input = st.chat_input("Zadaj pytanie dotyczące wgranego dokumentu...")
+
+    if user_input:
+        # Wyświetlenie zapytania w UI i zapis do historii
+        st.chat_message("user").markdown(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
+
+        # Przygotowanie łańcucha RAG
+        retriever = st.session_state.vectorstore.as_retriever(search_kwargs={"k": 4})
+        llm = get_llm()
+        rag_chain = get_conversational_rag_chain(retriever, llm)
+
+        chat_history = get_langchain_chat_history()
+
+        # Odpowiedź asystenta
         with st.chat_message("assistant"):
-            res = "Najpierw wgraj i przetwórz dokument w panelu bocznym."
-            st.markdown(res)
-            st.session_state.messages.append({"role": "assistant", "content": res})
-    else:
-        with st.chat_message("assistant"):
-            with st.spinner("Szukam odpowiedzi..."):
-                response = rag_chain.invoke({"input": user_input})
-                answer = response["answer"]
-                st.markdown(answer)
+            with st.spinner("Szukam odpowiedzi w dokumencie..."):
+                try:
+                    response = rag_chain.invoke({
+                        "input": user_input,
+                        "chat_history": chat_history,
+                    })
+                    answer = response["answer"]
+                    st.markdown(answer)
 
-                with st.expander("Zobacz źródła z dokumentu"):
-                    for i, doc in enumerate(response.get("context", [])):
-                        st.write(f"**Fragment {i+1}:**")
-                        st.caption(doc.page_content)
+                    # Zapis odpowiedzi
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
 
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                except Exception as e:
+                    st.error(f"Wystąpił błąd: {e}")
